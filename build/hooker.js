@@ -12,14 +12,6 @@ var _asyncToGenerator2 = require('babel-runtime/helpers/asyncToGenerator');
 
 var _asyncToGenerator3 = _interopRequireDefault(_asyncToGenerator2);
 
-var _promise = require('babel-runtime/core-js/promise');
-
-var _promise2 = _interopRequireDefault(_promise);
-
-var _keys = require('babel-runtime/core-js/object/keys');
-
-var _keys2 = _interopRequireDefault(_keys);
-
 var _classCallCheck2 = require('babel-runtime/helpers/classCallCheck');
 
 var _classCallCheck3 = _interopRequireDefault(_classCallCheck2);
@@ -28,22 +20,28 @@ var _createClass2 = require('babel-runtime/helpers/createClass');
 
 var _createClass3 = _interopRequireDefault(_createClass2);
 
+var _keys = require('babel-runtime/core-js/object/keys');
+
+var _keys2 = _interopRequireDefault(_keys);
+
+var _toConsumableArray2 = require('babel-runtime/helpers/toConsumableArray');
+
+var _toConsumableArray3 = _interopRequireDefault(_toConsumableArray2);
+
 var _wdioSync = require('wdio-sync');
 
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
 var TEST_COMMANDS = ['module', 'test', 'todo', 'skip', 'only'];
 
-var COMMANDS = [].concat(TEST_COMMANDS);
-
-var MODULE_HOOKS = {
-    'before': 'beforeSuite',
-    'beforeEach': 'beforeTest',
-    'afterEach': 'afterTest',
-    'after': 'afterSuite'
+var QUNIT_HOOKS = {
+    'moduleStart': 'beforeSuite',
+    'testStart': 'beforeTest',
+    'testDone': 'afterTest',
+    'moduleDone': 'afterSuite'
 };
 
-var NOOP = function NOOP() {};
+var COMMANDS = [].concat(TEST_COMMANDS, (0, _toConsumableArray3.default)((0, _keys2.default)(QUNIT_HOOKS)));
 
 /**
  * QUnit hooker
@@ -69,32 +67,10 @@ var QUnitHooker = function () {
                 (0, _wdioSync.runInFiberContext)(TEST_COMMANDS, _this.adapter.config.beforeHook, _this.adapter.config.afterHook, fnName, _this.adapter.runner);
             });
 
-            // wrap QUnit.module hooks
-            var qunitModule = this.adapter.runner.module;
-            this.adapter.runner.module = function (name, testEnvironment, executeNow) {
-                if (typeof testEnvironment !== 'function') {
-                    testEnvironment = testEnvironment || {};
-                    (0, _keys2.default)(MODULE_HOOKS).forEach(function (hookName) {
-                        var origHook = testEnvironment[hookName] || NOOP;
-                        testEnvironment[hookName] = function (assert) {
-                            return _this.wrapHook(MODULE_HOOKS[hookName])(assert).then(_promise2.default.resolve(origHook));
-                        };
-                    });
-                } else {
-                    var origTestEnvironment = testEnvironment;
-                    testEnvironment = function testEnvironment(hooks) {
-                        (0, _keys2.default)(MODULE_HOOKS).forEach(function (hookName) {
-                            hooks[hookName](function (assert) {
-                                return _this.wrapHook(MODULE_HOOKS[hookName])(assert);
-                            });
-                        });
-                        origTestEnvironment(hooks);
-                    };
-                }
-
-                // run original QUnit.module with wrapped hooks
-                qunitModule(name, testEnvironment, executeNow);
-            };
+            // let QUnit hooks trigger WDIO hooks
+            (0, _keys2.default)(QUNIT_HOOKS).forEach(function (hookName) {
+                _this.adapter.runner[hookName](_this.wrapHook(QUNIT_HOOKS[hookName]));
+            });
         }
     }, {
         key: 'execStartHook',
@@ -144,11 +120,6 @@ var QUnitHooker = function () {
 
             return execEndHook;
         }()
-
-        /**
-         * Hooks which are added as true QUnit hooks need to call done() to notify async
-         */
-
     }, {
         key: 'wrapHook',
         value: function wrapHook(hookName) {

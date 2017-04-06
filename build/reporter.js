@@ -8,6 +8,10 @@ var _promise = require('babel-runtime/core-js/promise');
 
 var _promise2 = _interopRequireDefault(_promise);
 
+var _defineProperty2 = require('babel-runtime/helpers/defineProperty');
+
+var _defineProperty3 = _interopRequireDefault(_defineProperty2);
+
 var _keys = require('babel-runtime/core-js/object/keys');
 
 var _keys2 = _interopRequireDefault(_keys);
@@ -19,6 +23,14 @@ var _classCallCheck3 = _interopRequireDefault(_classCallCheck2);
 var _createClass2 = require('babel-runtime/helpers/createClass');
 
 var _createClass3 = _interopRequireDefault(_createClass2);
+
+var _util = require('util');
+
+var _util2 = _interopRequireDefault(_util);
+
+var _os = require('os');
+
+var _os2 = _interopRequireDefault(_os);
 
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
@@ -44,6 +56,8 @@ var QUnitReporter = function () {
         this.adapter = adapter;
 
         this.lastError = null;
+        this.currentTest = null;
+        this.currentSuite = null;
 
         this.sentMessages = 0; // number of messages sent to the parent
         this.receivedMessages = 0; // number of messages received by the parent
@@ -65,11 +79,10 @@ var QUnitReporter = function () {
             });
         }
     }, {
-        key: 'prepareMessage',
-        value: function prepareMessage(hookName, payload) {
+        key: 'processMessage',
+        value: function processMessage(hookName, payload) {
             var params = { type: hookName, payload: payload };
 
-            // console.log('lastError', this.lastError)
             if (hookName === 'test:end') {
                 this.lastError = this.lastError || payload.assertions.find(function (assertion) {
                     return !assertion.passed;
@@ -80,19 +93,29 @@ var QUnitReporter = function () {
                 this.lastError = null;
             }
 
-            params.err = this.lastError;
-            return this.formatMessage(params);
+            var message = this.formatMessage(params);
+
+            if (hookName.startsWith('test')) {
+                this.currentTest = message;
+            } else if (hookName.startsWith('suite')) {
+                this.currentSuite = message;
+            }
+
+            return message;
         }
     }, {
         key: 'formatMessage',
         value: function formatMessage(params) {
             var message = {
+                event: params.type,
                 type: params.type
             };
 
             if (params.err) {
+                var reason = 'Actual value ' + _util2.default.inspect(params.err.actual) + ' does not match expected value ' + _util2.default.inspect(params.err.expected) + '.';
+
                 message.err = {
-                    message: params.err.message,
+                    message: 'Description: ' + params.err.message + _os2.default.EOL + ('Reason: ' + reason),
                     stack: params.err.stack,
                     type: params.err.todo ? 'ToDo' : '',
                     expected: params.err.expected,
@@ -101,40 +124,28 @@ var QUnitReporter = function () {
             }
 
             if (params.payload) {
-                message.title = params.payload.fullName[params.payload.fullName.length - 1];
-                message.parent = params.payload.fullName[params.payload.fullName.length - 2];
+                message.title = params.payload.fullName.slice().reverse()[0];
+                message.parent = params.payload.fullName.slice().reverse()[1];
                 message.fullTitle = params.payload.fullName.join(' - ');
-                message.pending = params.payload.status === 'skipped' || params.payload.status === 'todo' || false;
+                message.pending = params.payload.status === 'skipped' || params.payload.status === 'todo';
+                message.passed = params.payload.status === 'passed';
+                message.duration = params.payload.runtime;
                 message.file = undefined;
 
-                // FIXME
                 // Add the current test title to the payload for cases where it helps to
                 // identify the test, e.g. when running inside a beforeEach hook
-                if (params.payload.ctx && params.payload.ctx.currentTest) {
-                    message.currentTest = params.payload.ctx.currentTest.title;
-                }
-
-                if (params.type.match(/Test/i)) {
-                    message.passed = params.payload.status === 'passed';
-                    message.duration = params.payload.runtime;
-                }
+                // message.currentTest = this.currentTest.title
             }
 
-            // console.log('message', message)
             return message;
         }
     }, {
-        key: 'emit',
-        value: function emit(event, payload) {
-            var _this2 = this;
-
-            var message = this.prepareMessage(event, payload);
-
+        key: 'tagMessage',
+        value: function tagMessage(message) {
+            message.pid = process.pid;
             message.cid = this.adapter.cid;
             message.specs = this.adapter.specs;
-            message.event = event;
-            message.runner = {};
-            message.runner[this.adapter.cid] = this.adapter.capabilities;
+            message.runner = (0, _defineProperty3.default)({}, this.adapter.cid, this.adapter.capabilities);
 
             var _generateUID = this.generateUID(message),
                 uid = _generateUID.uid,
@@ -142,17 +153,33 @@ var QUnitReporter = function () {
 
             message.uid = uid;
             message.parentUid = parentUid;
+        }
+    }, {
+        key: 'emit',
+        value: function emit(event, payload) {
+            var message = this.processMessage(event, payload);
+
+            this.tagMessage(message);
 
             // When starting a new test, propagate the details to the test runner so that
             // commands, results, screenshots and hooks can be associated with this test
             if (event === 'test:start') {
                 this.sendInternal(event, message);
+                // Send test:status message before test:end
+            } else if (event === 'test:end') {
+                if (message.pending) {
+                    message.event = message.type = 'test:pending';
+                } else if (message.passed) {
+                    message.event = message.type = 'test:pass';
+                } else {
+                    message.event = message.type = 'test:fail';
+                }
+                this.sendMessage(message);
+
+                message.event = message.type = event;
             }
 
-            this.send(message, null, {}, function () {
-                return ++_this2.receivedMessages;
-            });
-            this.sentMessages++;
+            this.sendMessage(message);
         }
     }, {
         key: 'generateUID',
@@ -219,6 +246,18 @@ var QUnitReporter = function () {
         key: 'sendInternal',
         value: function sendInternal(event, message) {
             process.emit(event, message);
+        }
+    }, {
+        key: 'sendMessage',
+        value: function sendMessage(message) {
+            var _this2 = this;
+
+            // console.log('sending message', message)
+
+            this.send(message, null, {}, function () {
+                return ++_this2.receivedMessages;
+            });
+            this.sentMessages++;
         }
 
         /**
