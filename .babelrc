@@ -1,7 +1,7 @@
 {
   "presets": ["es2015", "stage-0"],
   "plugins": [
-    // FIXME add "rewire", and "rewire" under babel plugins in package.json
+    "rewire",
     "transform-runtime",
     "add-module-exports"
   ]
